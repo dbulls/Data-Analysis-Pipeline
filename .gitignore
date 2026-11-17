@@ -1,0 +1,54 @@
+# --- Your data and anything derived from it ---------------------------------
+# data/ holds the real input files; output/ holds charts, cleaned copies of
+# that data and reports built from it, so both stay out of version control.
+data/
+output/
+output_*/
+
+# Generated demo results (sample_data/ is synthetic and is kept, since the
+# tests can regenerate it, but the results built from it are not).
+sample_output/
+
+# Data files dropped anywhere else in the project
+*.csv
+!sample_data/**/*.csv
+*.xlsx
+*.xls
+*.parquet
+*.feather
+*.sqlite
+*.sqlite3
+*.db
+
+# --- Secrets and credentials -------------------------------------------------
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+secrets*.json
+*secret*
+*.token
+
+# Local config overrides may contain real column names or units
+my_config.json
+config.local.json
+
+# --- Python ------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+.ipynb_checkpoints/
+
+# --- Editor and OS -----------------------------------------------------------
+.DS_Store
+.idea/
+.vscode/
+
+# --- Claude Code local settings ----------------------------------------------
+.claude/settings.local.json
