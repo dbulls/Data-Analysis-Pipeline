@@ -22,6 +22,9 @@ class Config:
     type_overrides: dict = field(default_factory=dict)
     # Units for axis labels: {"table.column": "USD"}
     units: dict = field(default_factory=dict)
+    # How a column or table is named in sentences, charts and the app:
+    # {"table.column": "order value", "column": "customer segment"}
+    labels: dict = field(default_factory=dict)
 
     # Lag-1 autocorrelation (after removing each period's mean) at which a
     # series counts as a carried-over level and is analysed as % changes.

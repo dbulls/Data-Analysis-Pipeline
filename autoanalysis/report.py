@@ -40,10 +40,10 @@ def widespread_patterns(run):
             if kind in names and n >= 10 and passed[(table, kind)] > n / 2]
 
 
-def describe_rejected(candidate):
+def describe_rejected(candidate, labels=None):
     """Short description of a rejected candidate: what was tested, in neutral words."""
     try:
-        return wording.statement(candidate)
+        return wording.statement(candidate, labels)
     except (KeyError, TypeError, ValueError):
         return candidate["id"]
 
@@ -75,7 +75,7 @@ def build_blocks(run):
         blocks.append(("p", "No pattern passed every check. With this data, the honest conclusion is that "
                             "there is not enough evidence for any of the patterns tested."))
     for finding in top:
-        blocks.append(("h3", f"{finding['rank']}. {wording.statement(finding)}"))
+        blocks.append(("h3", f"{finding['rank']}. {wording.statement(finding, config.labels)}"))
         blocks.append(("p", f"**Confidence: {finding['confidence']}.** {finding['confidence_reason']} "
                             f"Category: {finding['category']}. Table: `{finding['table']}`. "
                             f"Ranking score {finding['score']['total']:.2f} "
@@ -83,13 +83,13 @@ def build_blocks(run):
                             f"{finding['score']['reliability']:.2f}, actionability "
                             f"{finding['score']['actionability']:.2f})."))
         if finding.get("chart"):
-            blocks.append(("img", finding["chart"], wording.statement(finding)))
+            blocks.append(("img", finding["chart"], wording.statement(finding, config.labels)))
         blocks.append(("ul", wording.evidence(finding)))
         blocks.append(("p", "**To confirm:** " + wording.what_would_confirm(finding)))
     if rest:
         blocks.append(("h3", f"Other findings that passed ({len(rest)})"))
         blocks.append(("table", ["Rank", "Finding", "Confidence"],
-                       [[f["rank"], wording.statement(f), f["confidence"]] for f in rest]))
+                       [[f["rank"], wording.statement(f, config.labels), f["confidence"]] for f in rest]))
 
     # ---- Rejected ---------------------------------------------------------
     blocks.append(("h2", "Patterns that looked promising but failed the checks"))
@@ -112,7 +112,7 @@ def build_blocks(run):
             continue
         blocks.append(("h3", f"{REJECTION_TITLES[code]} ({len(group)})"))
         shown = group[:8]
-        blocks.append(("ul", [f"{describe_rejected(c)} **Why rejected:** "
+        blocks.append(("ul", [f"{describe_rejected(c, config.labels)} **Why rejected:** "
                               + " ".join(r["explanation"] for r in c["rejections"]) for c in shown]))
         if len(group) > len(shown):
             blocks.append(("p", f"...and {len(group) - len(shown)} more of this kind in `04_rejected.json`."))

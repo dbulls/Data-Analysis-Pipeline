@@ -1,4 +1,10 @@
-"""Plain-language text for findings: the statement, the evidence, and what would confirm it."""
+"""Plain-language text for findings: the statement, the evidence, and what would confirm it.
+
+Names of columns and tables are shown through labels.py, so sentences say
+"study hours per week", not `study_hours_per_week`.
+"""
+
+from .labels import CHANGE_SUFFIX, capitalize_first, pretty_column, pretty_table
 
 
 def number(value):
@@ -19,15 +25,16 @@ def percent(value):
     return "n/a" if value is None else f"{abs(value):.0f}%"
 
 
-CHANGE_SUFFIX = "_pct_change"
-
-
-def change_statement(candidate):
+def change_statement(candidate, labels=None):
     """Wording for a series of % changes (see timeseries.py): talk in percentage points."""
-    kind, cols = candidate["kind"], candidate["columns"]
+    kind, cols, table = candidate["kind"], candidate["columns"], candidate["table"]
     s = candidate["result"]["summary"]
     up = candidate["result"]["direction"] == 1
-    name = cols.get("value", "").removesuffix(CHANGE_SUFFIX)
+
+    def label(column):
+        return pretty_column(column.removesuffix(CHANGE_SUFFIX), labels, table)
+
+    name = label(cols.get("value", ""))
     if kind == "anomaly_mean":
         return (f"{name} moved unusually in {s['period_label']}: average change per record {s['value']:+.2f}% "
                 f"vs. about {s['baseline']:+.2f}% in surrounding {s['period']}s.")
@@ -38,35 +45,45 @@ def change_statement(candidate):
     if kind == "breakpoint":
         return (f"The average change per record in {name} shifted {'up' if up else 'down'} around "
                 f"{s['break_period']} (from {s['mean_before']:+.3f}% to {s['mean_after']:+.3f}%).")
+    time = pretty_column(cols.get("time", ""), labels, table)
     if kind == "dist_shift":
         ratio = s["std_second_half"] / s["std_first_half"] if s["std_first_half"] else None
         sizes = f"(typical size {s['std_first_half']:.2f}% vs. {s['std_second_half']:.2f}%)"
         if ratio is None or 0.85 <= ratio <= 1.15:
             return (f"The pattern of moves in {name} changed between the first and second half of the "
-                    f"{cols['time']} range, though their typical size barely did {sizes}.")
+                    f"{time} range, though their typical size barely did {sizes}.")
         return (f"Moves in {name} became {'larger' if ratio > 1 else 'smaller'} in the second half of the "
-                f"{cols['time']} range {sizes}.")
+                f"{time} range {sizes}.")
     if kind == "seasonality":
         means = s["bucket_means"]
         cycle = "month of year" if cols["cycle"] == "month_of_year" else "day of week"
         return (f"Changes in {name} differ by {cycle}: on average {means[s['peak']]:+.3f}% per record in "
                 f"{s['peak']} vs. {means[s['trough']]:+.3f}% in {s['trough']}.")
     if kind == "correlation":
-        x, y = cols["x"].removesuffix(CHANGE_SUFFIX), cols["y"].removesuffix(CHANGE_SUFFIX)
-        return (f"{x} and {y} tend to move {'together' if up else 'in opposite directions'} from one record "
+        return (f"{label(cols['x'])} and {label(cols['y'])} tend to move "
+                f"{'together' if up else 'in opposite directions'} from one record "
                 f"to the next (rank correlation of their changes {s['rho']:+.2f}).")
     return None
 
 
-def statement(candidate):
+def statement(candidate, labels=None):
     """One sentence saying what was found. Also used as the chart title."""
-    kind, cols, table = candidate["kind"], candidate["columns"], candidate["table"]
+    return capitalize_first(raw_statement(candidate, labels))
+
+
+def raw_statement(candidate, labels=None):
+    kind, cols, raw_table = candidate["kind"], candidate["columns"], candidate["table"]
     if any(str(v).endswith(CHANGE_SUFFIX) for v in cols.values()):
-        special = change_statement(candidate)
+        special = change_statement(candidate, labels)
         if special:
             return special
     s = candidate["result"]["summary"]
-    value = cols.get("value")
+    table = pretty_table(raw_table, labels)
+
+    def label(key):
+        return pretty_column(cols[key], labels, raw_table) if cols.get(key) else None
+
+    value, group, time = label("value"), label("group"), label("time")
     up = candidate["result"]["direction"] == 1
 
     if kind in ("trend_mean", "trend_count", "trend_total"):
@@ -92,24 +109,25 @@ def statement(candidate):
     if kind == "group_diff":
         groups = s["groups"]
         what = "rate" if s["typical_is"] == "rate" else "median"
-        return (f"{value} differs by {cols['group']}: highest for {s['highest']} "
+        return (f"{value} differs by {group}: highest for {s['highest']} "
                 f"({what} {number(groups[s['highest']]['typical'])}), lowest for {s['lowest']} "
                 f"({what} {number(groups[s['lowest']]['typical'])}), a gap of "
                 f"{percent(s['percent_gap_highest_vs_lowest'])}"
-                + (f" (compared per {cols['unit']})." if cols.get("unit") else "."))
+                + (f" (compared per {pretty_column(cols['unit'], labels, raw_table)})." if cols.get("unit") else "."))
     if kind == "correlation":
-        return (f"Higher {cols['x']} tends to go with {'higher' if up else 'lower'} {cols['y']} "
+        return (f"Higher {label('x')} tends to go with {'higher' if up else 'lower'} {label('y')} "
                 f"(rank correlation {s['rho']:+.2f}).")
     if kind == "concentration":
         share = f"{s['top_20_percent_share']:.0%}"
-        if "entity" in cols and value:
-            return f"The top 20% of {cols['entity']} values account for {share} of total {value}."
-        if "entity" in cols:
-            return f"The top 20% of {cols['entity']} values account for {share} of all rows in {table}."
+        entity = label("entity")
+        if entity and value:
+            return f"The top 20% of {entity} values account for {share} of total {value}."
+        if entity:
+            return f"The top 20% of {entity} values account for {share} of all rows in {table}."
         return f"The largest 20% of rows in {table} account for {share} of total {value}."
     if kind == "dist_shift":
         return (f"The distribution of {value} shifted {'up' if up else 'down'} between the first and second "
-                f"half of the {cols['time']} range (median {number(s['median_first_half'])} to "
+                f"half of the {time} range (median {number(s['median_first_half'])} to "
                 f"{number(s['median_second_half'])}).")
     raise ValueError(kind)
 

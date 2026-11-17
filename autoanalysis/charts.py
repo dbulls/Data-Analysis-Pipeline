@@ -19,16 +19,23 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from . import measures
+from .labels import pretty_column, pretty_table
 from .wording import statement
 
 SURFACE, INK, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e1e0d9"
 BLUE, ORANGE, NEUTRAL = "#2a78d6", "#eb6834", "#898781"
 
 
+def name(column, table, config):
+    """A column's readable name (labels.py), honouring the config's label overrides."""
+    return pretty_column(column, config.labels, table)
+
+
 def axis_label(table, column, config, prefix=""):
-    """Column name plus its unit. Units are not in the data, so they come from config."""
+    """Readable column name plus its unit. Units are not in the data, so they come from config."""
     unit = config.units.get(f"{table}.{column}") or config.units.get(column)
-    label = f"{prefix}{column} ({unit})" if unit else f"{prefix}{column} (units as recorded in source)"
+    shown = name(column, table, config)
+    label = f"{prefix}{shown} ({unit})" if unit else f"{prefix}{shown} (units as recorded in source)"
     return "\n".join(textwrap.wrap(label, 55))
 
 
@@ -71,9 +78,9 @@ def time_series(candidate, df, config):
 def time_axis_labels(ax, candidate, config):
     kind, cols, table = candidate["kind"], candidate["columns"], candidate["table"]
     period = measures.FREQUENCY_NAMES[cols["freq"]]
-    ax.set_xlabel(f"{cols['time']} ({period})")
+    ax.set_xlabel(f"{name(cols['time'], table, config)} ({period})")
     if kind in ("trend_count", "anomaly_count"):
-        ax.set_ylabel(f"rows in {table} per {period} (count"
+        ax.set_ylabel(f"rows in {pretty_table(table, config.labels)} per {period} (count"
                       + (", scaled to an average-length month)" if cols["freq"] == "M" else ")"))
     elif kind == "trend_total":
         ax.set_ylabel(axis_label(table, cols["value"], config, f"total per {period}: "))
@@ -151,7 +158,8 @@ def draw_group_diff(ax, candidate, df, config):
         rates = [groups[g]["mean"] * 100 for g in names]
         errors = [1.96 * groups[g]["standard_error"] * 100 for g in names]
         ax.errorbar(rates, labels, xerr=errors, fmt="o", color=BLUE, elinewidth=2, capsize=4, markersize=8)
-        ax.set_xlabel(f"{cols['value']}: share of records that are yes (%, with 95% interval)")
+        ax.set_xlabel(f"{name(cols['value'], candidate['table'], config)}: share of records that are yes "
+                      "(%, with 95% interval)")
     else:
         data, _ = measures.group_diff_data(df, cols)
         samples = [data.loc[data[cols["group"]].astype(str) == g, cols["value"]] for g in names]
@@ -161,7 +169,8 @@ def draw_group_diff(ax, candidate, df, config):
                    whiskerprops={"color": BLUE}, capprops={"color": BLUE})
         ax.set_xlabel(axis_label(candidate["table"], cols["value"], config)
                       + "\nbox = middle half, line = median, extreme values not drawn")
-    ax.set_ylabel(cols["group"] + (f"\n(one value per {cols['unit']})" if cols.get("unit") else ""))
+    ax.set_ylabel(name(cols["group"], candidate["table"], config)
+                  + (f"\n(one value per {name(cols['unit'], candidate['table'], config)})" if cols.get("unit") else ""))
 
 
 def draw_correlation(ax, candidate, df, config):
@@ -170,7 +179,7 @@ def draw_correlation(ax, candidate, df, config):
     step = max(1, len(data) // 4000)            # thin very large data, deterministically
     shown = data.iloc[::step]
     ax.scatter(shown[cols["x"]], shown[cols["y"]], s=12, color=BLUE, alpha=0.35, linewidth=0,
-               label=(f"one per {cols['unit']}" if cols.get("unit") else "records")
+               label=(f"one per {name(cols['unit'], candidate['table'], config)}" if cols.get("unit") else "records")
                + (f" (every {step}th shown)" if step > 1 else ""))
     xs = np.array([data[cols["x"]].min(), data[cols["x"]].max()])
     ax.plot(xs, s["line_slope"] * xs + s["line_intercept"], color=ORANGE, linewidth=2,
@@ -191,8 +200,10 @@ def draw_concentration(ax, candidate, df, config):
     ax.scatter([20], [top], s=90, color=ORANGE, edgecolor=SURFACE, linewidth=2, zorder=3)
     ax.annotate(f"top 20% hold {top:.0f}%", (20, top), xytext=(10, -14), textcoords="offset points",
                 fontsize=10, color=INK)
-    unit = cols.get("entity", f"{candidate['table']} records")
-    what = cols.get("value", f"{candidate['table']} records")
+    table = candidate["table"]
+    records = f"{pretty_table(table, config.labels)} records"
+    unit = name(cols["entity"], table, config) if "entity" in cols else records
+    what = name(cols["value"], table, config) if "value" in cols else records
     ax.set_xlabel(f"{unit}, largest first (cumulative % of units)")
     ax.set_ylabel(f"cumulative share of total {what} (%)")
     legend(ax)
@@ -222,10 +233,16 @@ DRAWERS = {
 }
 
 
-def draw_chart(candidate, df, config, path):
-    fig, ax = new_figure(statement(candidate))
+def make_figure(candidate, df, config):
+    """The finished chart for one finding, not yet saved. The app draws charts this way."""
+    fig, ax = new_figure(statement(candidate, config.labels))
     DRAWERS[candidate["kind"]](ax, candidate, df, config)
     fig.tight_layout(rect=(0, 0, 1, 0.9))
+    return fig
+
+
+def draw_chart(candidate, df, config, path):
+    fig = make_figure(candidate, df, config)
     fig.savefig(path, dpi=130, facecolor=SURFACE, metadata={"Software": None})
     plt.close(fig)
 

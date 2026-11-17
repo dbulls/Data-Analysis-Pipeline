@@ -127,3 +127,43 @@ def test_profile_reports_missing_cardinality_and_duplicates(run):
 def test_shared_key_between_tables_is_detected(run):
     assert any(r["child_table"] == "orders" and r["parent_table"] == "customers"
                and r["child_column"] == "customer_id" for r in run["relationships"])
+
+
+# ---- messy real-world formats (e.g. hand-entered order exports) --------------
+
+def test_one_currency_or_unit_is_removed_and_logged():
+    raw = pd.DataFrame({"price": ["$16.49", "45.00 USD", "USD 24.95", "21.00", "4,99"] * 8,
+                        "qty": ["2 pcs", "4.0", "3", "1 pcs"] * 10})
+    cleaned, _, log, types = clean_one(raw)
+    assert types["price"] == types["qty"] == "numeric"
+    assert cleaned["price"].head(5).tolist() == [16.49, 45.0, 24.95, 21.0, 4.99]
+    assert cleaned["qty"].head(4).tolist() == [2.0, 4.0, 3.0, 1.0]
+    assert {"R3 remove currency or unit", "R3 decimal comma"} <= rules_logged(log, "price")
+
+
+def test_mixed_currencies_are_not_silently_combined():
+    values = infer.parse_numbers(pd.Series(["$10.00", "EUR 10.00", "12.50"]))
+    assert values.isna().tolist() == [True, True, False]
+
+
+def test_thousands_separator_is_not_read_as_decimal_comma():
+    assert infer.parse_numbers(pd.Series(["1,234", "4,99", "1,234.5"])).tolist() == [1234.0, 4.99, 1234.5]
+
+
+def test_mixed_yes_no_spellings_are_one_boolean():
+    raw = pd.DataFrame({"paid": ["true", "TRUE", "1", "yes", "Y", "no", "0", "False"] * 5})
+    cleaned, _, log, types = clean_one(raw)
+    assert types["paid"] == "boolean"
+    assert cleaned["paid"].head(8).tolist() == [1, 1, 1, 1, 1, 0, 0, 0]
+    assert "R3 read yes/no values" in rules_logged(log, "paid")
+
+
+def test_mixed_date_formats_are_read_and_swappable_day_month_is_flagged():
+    raw = pd.DataFrame({"when": ["2024-03-05", "13.04.2022", "01-Nov-2022", "Nov 01, 2022",
+                                 "02/27/2026", "03/04/2026", "2026/02/08"] * 6})
+    cleaned, _, log, types = clean_one(raw)
+    assert types["when"] == "datetime"
+    assert cleaned["when"].notna().all()
+    assert str(cleaned["when"].iloc[1].date()) == "2022-04-13"
+    assert str(cleaned["when"].iloc[5].date()) == "2026-03-04"     # month first, like 02/27/2026
+    assert "R4 ambiguous date order" in rules_logged(log, "when")

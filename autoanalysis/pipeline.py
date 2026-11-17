@@ -6,6 +6,7 @@ Output files (numbered in the order they are produced):
     02_cleaning_log.json     every cleaning rule that changed something
     02_cleaned/              cleaned copies of the tables + outlier flags (+ derived change tables)
     02_persistent_series.json  columns analysed as % changes instead of levels
+    02_views/                the tables as the search saw them (typed, parent columns joined on), used by the app to redraw charts
     03_candidates.json       every pattern tested, with its measurement
     03_skipped.json          patterns that could not be tested (data too thin)
     04_accepted.json         findings that passed every check, ranked
@@ -71,17 +72,21 @@ def collect_assumptions(config, run):
     return items
 
 
-def run_pipeline(data_dir, output_dir, config=None):
+def run_pipeline(data_dir, output_dir, config=None, progress=None):
+    """Run every stage. `progress`, if given, is called with a short message as each stage starts."""
     config = config or Config()
+    say = progress or (lambda message: None)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Load and profile
+    say("Reading and profiling the data")
     raw_tables = loading.load_raw_tables(data_dir)
     table_profile, types = profile.profile_tables(raw_tables, config)
     loading.save_json(table_profile, output_dir / "01_profile.json")
 
     # 2. Clean (raw_tables is left untouched)
+    say("Cleaning")
     cleaned, outlier_flags, cleaning_log = clean.clean_tables(raw_tables, types, config)
     loading.save_json(cleaning_log, output_dir / "02_cleaning_log.json")
     cleaned_dir = output_dir / "02_cleaned"
@@ -100,20 +105,31 @@ def run_pipeline(data_dir, output_dir, config=None):
         if name.endswith(timeseries.CHANGE_TABLE_SUFFIX):
             views[name].to_csv(cleaned_dir / f"{name}.csv", index=False)
 
+    views_dir = output_dir / "02_views"
+    views_dir.mkdir(exist_ok=True)
+    for old in views_dir.glob("*.pkl"):
+        old.unlink()
+    for name, df in views.items():
+        df.to_pickle(views_dir / f"{name}.pkl")      # typed copies, so charts can be redrawn later
+
     # 3. Search for candidate patterns
+    say("Searching for patterns")
     candidates, skipped, search_notes = search.search_all(views, view_types, joined_columns, found, config)
     loading.save_json(candidates, output_dir / "03_candidates.json")
     loading.save_json(skipped, output_dir / "03_skipped.json")
 
     # 4. Filter for real signal
+    say(f"Checking {len(candidates)} candidate patterns (significance, robustness, rejection rules)")
     accepted, rejected = filters.evaluate(candidates, views, view_types, joined_columns, config)
 
     # 5. Charts
+    say("Drawing charts")
     charts.draw_all(accepted, views, config, output_dir / "05_charts")
     loading.save_json(accepted, output_dir / "04_accepted.json")
     loading.save_json(rejected, output_dir / "04_rejected.json")
 
     # 6. Report
+    say("Writing the report")
     run = {
         "data_dir": str(data_dir), "config": config, "profile": table_profile, "types": types,
         "relationships": found, "cleaning_log": cleaning_log, "candidates": candidates,

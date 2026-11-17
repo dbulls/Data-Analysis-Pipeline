@@ -1,0 +1,8 @@
+[server]
+# Skips Streamlit's first-run "Welcome" email prompt. The side effect is that it no
+# longer opens the browser by itself: open the Local URL it prints (http://localhost:8501).
+headless = true
+
+[browser]
+# Don't send usage statistics anywhere.
+gatherUsageStats = false

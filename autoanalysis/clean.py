@@ -4,6 +4,8 @@ Rules (each one writes a line to the cleaning log when it changes anything):
     R1  trim whitespace
     R2  turn missing-value tokens ("", "N/A", "null", ...) into real missing values
     R3  convert numeric / boolean columns; unparseable values become missing
+        (a single currency or unit written next to the numbers is removed and logged;
+        decimal commas such as 4,99 are read as 4.99 and logged)
     R4  standardise dates to ISO format; unparseable values become missing
     R5  merge category spellings that differ only by letter case
     R6  drop exact duplicate rows, only in tables that have a unique row identifier
@@ -58,9 +60,27 @@ def clean_table(table_name, raw_df, types, config):
 
         if column_type in ("numeric", "boolean"):
             # R3 numeric conversion
-            numbers = infer.parse_numbers(text.fillna(""))
-            if column_type == "boolean" and numbers.notna().sum() == 0:
-                numbers = infer.parse_booleans(text.fillna(""))
+            present = text.fillna("")
+            if column_type == "boolean":
+                numbers = infer.parse_booleans(present)
+                spellings = sorted(present[numbers.notna()].unique())
+                record("R3 read yes/no values", column, numbers.notna().sum() if len(spellings) > 2 else 0,
+                       f"Read as yes (1) / no (0) from {len(spellings)} spellings: {', '.join(spellings[:12])}.")
+            else:
+                numbers = infer.parse_numbers(present)
+                unit, _ = infer.number_units(present)
+                stripped = unit.notna() & numbers.notna()
+                if stripped.any():
+                    found = present[stripped].str.extract(infer.WRAPPED_NUMBER)
+                    written = sorted(set(found["before"].dropna()) | set(found["after"].dropna()))
+                    record("R3 remove currency or unit", column, stripped.sum(),
+                           f"Numbers written with a unit; the unit was removed and assumed to be the same "
+                           f"for every value: {unit.dropna().iloc[0]} (written as {', '.join(written)}). "
+                           f"Examples: {', '.join(sorted(present[stripped].unique())[:3])}.")
+                comma = present.str.contains(r"\d,\d{1,2}(?:\s|$|[A-Za-z])", regex=True) & numbers.notna()
+                record("R3 decimal comma", column, comma.sum(),
+                       "Comma followed by one or two digits read as a decimal point (4,99 -> 4.99). "
+                       f"Examples: {', '.join(sorted(present[comma].unique())[:3])}.")
             bad = numbers.isna() & ~missing
             record("R3 unparseable number", column, bad.sum(),
                    "Could not be read as a number; set to missing. Examples: "
@@ -76,7 +96,12 @@ def clean_table(table_name, raw_df, types, config):
             non_iso = sum(n for fmt, n in info["formats_used"].items() if not fmt.startswith("%Y-%m-%d"))
             record("R4 standardise date format", column, non_iso,
                    f"Converted to ISO dates. Formats found: {info['formats_used']}.")
-            if info["ambiguous"]:
+            if info["two_meanings"]:
+                record("R4 ambiguous date order", column, info["two_meanings"],
+                       "These values fit more than one date format with different meanings "
+                       "(e.g. 03/04 as 3 April or 4 March). Each was read with the format that fits most "
+                       f"of the column; formats found: {info['formats_used']}. Check day/month order.")
+            elif info["ambiguous"]:
                 record("R4 ambiguous date order", column, dates.notna().sum(),
                        f"More than one format fits every value; assumed {info['chosen_first']}. "
                        "Check day/month order.")

@@ -22,16 +22,26 @@ DATE_FORMATS = [
     "%d/%m/%Y",
     "%d-%m-%Y",
     "%m-%d-%Y",
+    "%d.%m.%Y",
     "%d %b %Y",
+    "%d-%b-%Y",
     "%b %d, %Y",
     "%Y%m%d",
 ]
 
 PLAIN_NUMBER = re.compile(r"^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$")
 THOUSANDS_NUMBER = re.compile(r"^[+-]?\d{1,3}(,\d{3})+(\.\d+)?$")
+# "4,99": a comma followed by one or two digits can only be a decimal comma
+# ("1,234" with three digits stays a thousands separator, as above).
+DECIMAL_COMMA_NUMBER = re.compile(r"^[+-]?\d+,\d{1,2}$")
 
-TRUE_WORDS = {"true", "yes", "y", "t"}
-FALSE_WORDS = {"false", "no", "n", "f"}
+# A number with a currency or unit around it: "$16.49", "USD 24.95", "45.00 USD", "2 pcs".
+CURRENCY_SYMBOLS = {"$": "USD", "€": "EUR", "£": "GBP", "¥": "JPY"}
+WRAPPED_NUMBER = re.compile(
+    r"^(?P<before>[$€£¥]|[A-Z]{3}(?= ))?\s*(?P<number>[+-]?[\d.,]+)\s*(?P<after>[A-Za-z]{1,10}\.?)?$")
+
+TRUE_WORDS = {"true", "yes", "y", "t", "1", "1.0"}
+FALSE_WORDS = {"false", "no", "n", "f", "0", "0.0"}
 
 
 def trim(series):
@@ -44,17 +54,49 @@ def is_missing(series, config):
     return series.str.lower().isin(config.missing_tokens)
 
 
-def parse_numbers(series):
-    """Text -> float. Accepts plain numbers and 1,234.5 style. Others become NaN."""
+def bare_numbers(series):
+    """Text that is only a number -> float: 12.5, 1,234.5 or 4,99. Others become NaN."""
     plain = series.str.match(PLAIN_NUMBER)
     thousands = series.str.match(THOUSANDS_NUMBER)
+    decimal_comma = series.str.match(DECIMAL_COMMA_NUMBER)
     cleaned = series.where(~thousands, series.str.replace(",", "", regex=False))
-    numbers = pd.to_numeric(cleaned.where(plain | thousands), errors="coerce")
-    return numbers.astype(float)
+    cleaned = cleaned.where(~decimal_comma, series.str.replace(",", ".", regex=False))
+    return pd.to_numeric(cleaned.where(plain | thousands | decimal_comma), errors="coerce").astype(float)
+
+
+def number_units(series):
+    """The currency or unit written around each number ("$" -> "USD", "pcs"), or None.
+
+    Returns (unit_per_value, numeric_part_per_value) for values shaped like a wrapped number.
+    """
+    parts = series.str.extract(WRAPPED_NUMBER)
+    before = parts["before"].map(lambda u: CURRENCY_SYMBOLS.get(u, u), na_action="ignore")
+    after = parts["after"].str.rstrip(".")
+    after = after.where(after.isna() | ~after.str.upper().isin(CURRENCY_SYMBOLS.values()), after.str.upper())
+    unit = before.fillna(after)
+    unit = unit.where(~(before.notna() & after.notna()))      # "$5 USD"-style doubles: too unusual to trust
+    unit = unit.str.lower().where(~unit.isin(CURRENCY_SYMBOLS.values()), unit)
+    return unit, parts["number"]
+
+
+def parse_numbers(series):
+    """Text -> float. Others become NaN.
+
+    Accepts plain numbers, 1,234.5 and 4,99 styles, and numbers written with a
+    currency or unit ("$16.49", "45.00 USD", "2 pcs"), but only when the whole
+    column uses one currency or unit. With two (say USD and EUR) the amounts
+    are not comparable, so values carrying a unit are left unparsed.
+    """
+    numbers = bare_numbers(series)
+    unit, number_part = number_units(series)
+    if unit.dropna().nunique() == 1:
+        wrapped = bare_numbers(number_part.fillna(""))
+        numbers = numbers.fillna(wrapped.where(unit.notna()))
+    return numbers
 
 
 def parse_booleans(series):
-    """Text -> 1.0 / 0.0 for yes/no style words. Others become NaN."""
+    """Text -> 1.0 / 0.0 for yes/no style words and 1/0, in any mix. Others become NaN."""
     lowered = series.str.lower()
     result = pd.Series(float("nan"), index=series.index, dtype=float)
     result[lowered.isin(TRUE_WORDS)] = 1.0
@@ -95,8 +137,12 @@ def parse_dates(series):
     if order:
         best = len(parsed_by_format[order[0]])
         ambiguous = any(len(parsed_by_format[fmt]) == best for fmt in order[1:])
+    # Values that two formats read as different dates (03/04/2026: 4 March or 3 April?).
+    # Each was read with the format that fits most of the column.
+    readings = pd.DataFrame(parsed_by_format)
+    two_meanings = int((readings.nunique(axis=1) > 1).sum()) if len(readings.columns) > 1 else 0
     return result, {"formats_used": used, "ambiguous": ambiguous,
-                    "chosen_first": order[0] if order else None}
+                    "chosen_first": order[0] if order else None, "two_meanings": two_meanings}
 
 
 def looks_like_identifier_name(column_name):
@@ -134,7 +180,8 @@ def infer_column_type(column_name, raw_series, config, override=None):
         if dates.notna().mean() < needed:
             return "identifier"
 
-    if parse_booleans(values).notna().mean() >= needed and n_unique <= 2:
+    booleans = parse_booleans(values)
+    if booleans.notna().mean() >= needed and booleans.nunique() == 2:
         return "boolean"
     if is_numeric:
         if set(numbers.dropna().unique()) <= {0.0, 1.0} and n_unique == 2:

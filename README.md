@@ -18,6 +18,38 @@ python run_pipeline.py
 That analyses every dataset in `data/`, each into its own folder in
 `output/`.
 
+## Use the app
+
+```bash
+python -m streamlit run app.py
+```
+
+It prints a Local URL; open <http://localhost:8501> in your browser (the project's
+`.streamlit/config.toml` stops Streamlit's first-run email prompt and its
+automatic browser launch). Pick a dataset in the sidebar and press
+**Run analysis** (or open an earlier run), then move through the pages with
+the tabs or the Back / Next buttons:
+
+| Page | What it shows |
+|---|---|
+| Overview | counts, a caution about how to read the results, the three strongest findings |
+| Top findings | one finding per slide: chart, plain-language sentence, confidence, checks behind it |
+| Chart explorer | every pattern that passed (not just the top list); filter, pick one, see its chart, download it |
+| Rejected patterns | what was thrown out and why, grouped by reason |
+| Your data | columns, types, what cleaning changed |
+| Assumptions | what to check before acting |
+
+After the pipeline code changes (anything in `autoanalysis/`), stop the app
+with Ctrl+C and start it again. A running app keeps the old analysis code in
+memory, and runs started from it use that old code.
+
+Column names are shown as words (`study_hours_per_week` becomes "study hours
+per week"). To word one differently, add `labels` to a `--config` file, or
+edit `Config.labels`: `{"orders.amount": "order value", "segment": "customer segment"}`.
+The app reads `output/<dataset>/`, so charts for any finding are redrawn from
+the saved `02_views/` tables; re-run a dataset once after updating if its
+folder has no `02_views/`.
+
 ## How datasets map to output folders
 
 | Put this in `data/` | Analysed as | Results in |
@@ -121,6 +153,16 @@ quartiles, histogram, distinct count, missing rate, duplicates. A column whose
 values almost all appear in another table's unique key is treated as a link
 between the tables; the parent's descriptive columns are then joined on so
 that, for example, order amounts can be compared by customer segment.
+
+**Messy formats.** Numbers written as `$16.49`, `45.00 USD`, `2 pcs` or `4,99`
+are read, but only when a column uses one currency or unit; with two (USD
+and EUR) those values are left unread rather than combined. `1,234` is still
+a thousand. Yes/no columns may mix `yes`, `Y`, `true`, `1` and so on. Dates
+may mix formats within a column (`2024-03-05`, `13.04.2022`, `01-Nov-2022`,
+`Nov 01, 2022`, `02/27/2026`); a value like `03/04/2026` is read the way the
+rest of the column is written and counted under "ambiguous date order".
+Words that stand for a number (`FREE` for a shipping cost) and spelling
+variants of a category (`Book` vs `BOOKS`) are not guessed at.
 
 **Clean.** Eight rules (R1-R8, listed at the top of `clean.py`): trim
 whitespace, convert missing-value tokens, convert numbers and dates (anything

@@ -38,6 +38,9 @@ The **candidate** is the unit everything passes around: `{id, kind, category, ta
 - `autoanalysis/filters.py`: significance, robustness checks, rejection rules, ranking, confidence and `mark_top`.
 - `autoanalysis/timeseries.py`: detects persistent series and builds the `__changes` tables.
 - `autoanalysis/wording.py`: the plain-language statement (also used as the chart title) and the "to confirm" text.
+- `autoanalysis/labels.py`: readable names for columns and tables. Everything a person reads goes through it.
+- `autoanalysis/results.py`: reads a finished `output/<dataset>/` back (JSON plus `02_views/`) and redraws any finding's chart.
+- `app.py`: Streamlit app: run a dataset, then page through results. Reads only what `output/` holds.
 - `make_synthetic_data.py`: generates `sample_data/shop/` with documented planted patterns and traps.
 - `tests/conftest.py`: session fixtures, which run the full pipeline once on synthetic data (seed 7).
 
@@ -48,6 +51,7 @@ python3 run_pipeline.py                                    # all datasets in dat
 python3 run_pipeline.py --only student_performance         # one dataset; other output folders untouched
 python3 run_pipeline.py --data sample_data --output sample_output
 python3 make_synthetic_data.py                             # regenerate sample_data/shop/
+python3 -m streamlit run app.py                            # the GUI (run datasets, browse results)
 python3 -m pytest -q                                       # full suite, ~25s
 python3 -m pytest tests/test_filters.py::test_noise_trend_is_rejected -q
 ```
@@ -61,6 +65,7 @@ There is no build or lint step. Dependencies are in `requirements.txt`. The exch
 - `measure_*` functions are pure functions of `(df, cols, config, relaxed)`, because the filters re-call them on subsets. `relaxed=True` lowers the minimum sample sizes (`scaled_minimum`); `need_p=False` skips expensive p-values.
 - `direction` is what replication must preserve: a sign (±1), or a `{label: value}` profile compared by shape. Add `replication_value`/`replication_name` when `effect_size` isn't comparable across subset sizes (trends do this).
 - Each rejection is `{code, explanation}` with a code from `report.REJECTION_TITLES`, and the explanation must quote the numbers. Never drop a candidate silently.
+- User-facing text never shows raw column names: use `labels.pretty_column` / `pretty_table` (and pass `config.labels`). Candidate ids and file names stay raw.
 - Cleaning rules call `record(rule, column, rows_affected, detail)` so every change is logged.
 - Thresholds and judgement calls live in `config.py`, never inline, and the assumptions text in `pipeline.collect_assumptions` must quote them.
 - Adding a kind of finding means touching all of these: `measure_*` + dispatcher, `search` enumeration + `CATEGORIES`, `effect_thresholds` + `actionability` in config, `wording.statement` and `what_would_confirm`, `charts.DRAWERS`, and a test.
@@ -81,22 +86,30 @@ There is no build or lint step. Dependencies are in `requirements.txt`. The exch
 
 Updating this section is part of finishing any task: record what changed, what's in progress, and any new known gap.
 
-**Built and tested (54 tests passing):**
+**Built and tested (65 tests passing):**
 - the full pipeline (all stages above);
 - one analysis per dataset with `--only` and `output/index.html`;
 - linked-table joins with per-parent aggregation;
 - persistent-series handling via change tables;
 - a per-kind cap on the report's top list;
-- a "common driver" note when most correlations pass.
+- a "common driver" note when most correlations pass;
+- Streamlit app (`app.py`): run, slide through top findings, chart explorer for all accepted findings, rejected patterns, data and assumptions pages; readable labels in sentences, charts and the app;
+- parsing of messy formats: one currency/unit around numbers, decimal commas, mixed yes/no spellings, mixed date formats per column (logged as R3/R4 entries); re-checked on seeds 1–10, unchanged;
+- the app explains a run where nothing could be tested instead of saying nothing passed;
+- `02_views/*.pkl` saved per run (typed tables the chart drawers need) and an optional `progress` callback on `run_pipeline`.
 
 **Run on the user's data:**
 - `exchange_rate_to_usd` (daily FX, 2004–2026, 50 currencies): mostly co-movement of daily changes;
-- `student_performance` (100 rows): study hours vs. exam score, rho +0.91.
+- `student_performance` (100 rows): study hours vs. exam score, rho +0.91;
+- `orders_messy` (500 rows): unit price by category, order count rising. Category has unmerged spelling variants (Book/BOOKS, Apparel/Apparell), so groups are split; Shipping stays categorical because of `FREE` words.
 
 **Known gaps / not started:**
 - One-day jumps in change series (e.g. devaluations) are rejected as `driven_by_single_record`. Detecting them was offered and deferred by the user.
+- No mapping of category synonyms or number words (`FREE` -> 0); would need a config option.
 - Not searched: category-by-category associations, interactions among 3+ columns, seasonality in row counts, free text.
 - Joins go one level deep only. Input is CSV only.
 - Trend tests ignore autocorrelation between periods.
 - The Trinidad & Tobago dollar is managed, so it isn't detected as persistent and is tested as a level; its p-values are optimistic.
+- App: not tested on very wide or phone layouts; chart axis labels still say "units as recorded in source" unless `units` is set; rejection explanations and check details still quote raw column names.
+- Runs made before `02_views/` existed need one re-run before the explorer can chart them.
 - Not a git repository yet.

@@ -54,7 +54,7 @@ def main():
         print(f"Tested {len(run['candidates'])} patterns: {len(run['accepted'])} passed, "
               f"{len(run['rejected'])} rejected, {len(run['skipped'])} not testable.")
         for finding in [f for f in run["accepted"] if f["in_top"]]:
-            print(f"  {finding['rank']:>3}. [{finding['confidence']:<6}] {statement(finding)}")
+            print(f"  {finding['rank']:>3}. [{finding['confidence']:<6}] {statement(finding, config.labels)}")
         print(f"Report: {output_root / name / '06_report.html'}")
 
     write_index(output_root)
